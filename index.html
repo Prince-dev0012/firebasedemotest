@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase ENVAPI Demo</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; }
+        .card { border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, textarea, select { width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #FFA000; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; }
+        button:hover { background-color: #FF8F00; }
+        pre { background: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; }
+        .status { padding: 10px; border-radius: 4px; margin-top: 10px; display: none; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .note { font-size: 0.9em; color: #666; background: #fff3e0; padding: 10px; border-radius: 4px; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <h1>Firebase + ENVAPI Proxy</h1>
+    
+    <div class="card">
+        <h2>1. Configuration</h2>
+        <div class="note">
+            <strong>Important:</strong> You must configure your ENVAPI Admin Dashboard first!
+            See <a href="README.md" target="_blank">README.md</a> for the correct JSON configuration for <code>envapi-demo-b49d</code>.
+        </div>
+
+        <label for="workerUrl">Worker URL</label>
+        <input type="text" id="workerUrl" placeholder="https://envapi-worker.your-subdomain.workers.dev" value="https://envapi-worker.free12345543210987.workers.dev">
+        
+        <label for="projectKey">Project Key</label>
+        <input type="text" id="projectKey" placeholder="pk_..." value="pk_demo_12345">
+        
+        <label for="apiName">API Name (configured in Admin)</label>
+        <input type="text" id="apiName" placeholder="e.g., firebase-firestore" value="firebase-firestore">
+        
+        <label for="mode">Database Type</label>
+        <select id="mode" onchange="updatePayloadExample()">
+            <option value="firestore">Firestore (Auto-format)</option>
+            <option value="rtdb">Realtime Database</option>
+        </select>
+    </div>
+
+    <div class="card">
+        <h2>2. Actions</h2>
+        <div style="margin-bottom: 10px;">
+            <label style="display:inline-block; margin-right:15px;"><input type="radio" name="action" value="write" checked onchange="toggleAction()"> Write Data (POST)</label>
+            <label style="display:inline-block;"><input type="radio" name="action" value="read" onchange="toggleAction()"> Read Data (GET)</label>
+        </div>
+
+        <div id="write-section">
+            <label for="payload">JSON Payload</label>
+            <textarea id="payload" rows="6"></textarea>
+            <button onclick="sendRequest()">Send Data</button>
+        </div>
+
+        <div id="read-section" style="display:none;">
+            <p>To read data, you need a separate API configuration in Admin with <code>"method": "GET"</code>.</p>
+            <label for="readApiName">Read API Name</label>
+            <input type="text" id="readApiName" placeholder="e.g., firebase-firestore-read" value="firebase-firestore-read">
+            <button onclick="loadData()">Load Data</button>
+        </div>
+    </div>
+
+    <div id="status" class="status"></div>
+    
+    <div class="card">
+        <h2>Response</h2>
+        <pre id="response">Waiting for request...</pre>
+    </div>
+
+    <script>
+        function toggleAction() {
+            const action = document.querySelector('input[name="action"]:checked').value;
+            document.getElementById('write-section').style.display = action === 'write' ? 'block' : 'none';
+            document.getElementById('read-section').style.display = action === 'read' ? 'block' : 'none';
+        }
+
+        function updatePayloadExample() {
+            const mode = document.getElementById('mode').value;
+            const payload = document.getElementById('payload');
+            
+            if (mode === 'firestore') {
+                payload.value = JSON.stringify({
+                    text: "Hello from ENVAPI!",
+                    timestamp: new Date().toISOString(),
+                    user: "demo-user"
+                }, null, 2);
+            } else {
+                payload.value = JSON.stringify({
+                    message: "Hello Realtime DB!",
+                    count: 123
+                }, null, 2);
+            }
+        }
+
+        // Initialize with default example
+        updatePayloadExample();
+
+        // Helper to convert simple JSON to Firestore fields format
+        function toFirestoreFields(obj) {
+            const fields = {};
+            for (const key in obj) {
+                const val = obj[key];
+                if (typeof val === 'string') {
+                    fields[key] = { stringValue: val };
+                } else if (typeof val === 'number') {
+                    if (Number.isInteger(val)) {
+                        fields[key] = { integerValue: val };
+                    } else {
+                        fields[key] = { doubleValue: val };
+                    }
+                } else if (typeof val === 'boolean') {
+                    fields[key] = { booleanValue: val };
+                } else if (val instanceof Date) {
+                    fields[key] = { timestampValue: val.toISOString() };
+                } else if (val === null) {
+                    fields[key] = { nullValue: null };
+                } else if (Array.isArray(val)) {
+                    // Simplified array support
+                    fields[key] = { arrayValue: { values: val.map(v => ({ stringValue: String(v) })) } };
+                } else if (typeof val === 'object') {
+                    // Recursive map support
+                    fields[key] = { mapValue: { fields: toFirestoreFields(val) } };
+                }
+            }
+            return fields;
+        }
+
+        async function sendRequest() {
+            const workerUrl = document.getElementById('workerUrl').value.replace(/\/$/, '');
+            const projectKey = document.getElementById('projectKey').value;
+            const apiName = document.getElementById('apiName').value;
+            const mode = document.getElementById('mode').value;
+            let payloadText = document.getElementById('payload').value;
+            
+            const statusDiv = document.getElementById('status');
+            const responsePre = document.getElementById('response');
+            
+            statusDiv.style.display = 'block';
+            statusDiv.className = 'status';
+            statusDiv.textContent = 'Sending request...';
+            responsePre.textContent = 'Loading...';
+
+            try {
+                let payload = JSON.parse(payloadText);
+
+                // If Firestore mode, automatically wrap in "fields" format if not already present
+                if (mode === 'firestore' && !payload.fields) {
+                    console.log("Auto-formatting for Firestore...");
+                    payload = { fields: toFirestoreFields(payload) };
+                }
+
+                const res = await fetch(`${workerUrl}/proxy`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        projectKey: projectKey,
+                        apiName: apiName,
+                        ...payload
+                    })
+                });
+
+                const data = await res.json();
+                
+                if (res.ok) {
+                    statusDiv.classList.add('success');
+                    statusDiv.textContent = 'Success! Data written to Firebase.';
+                    responsePre.textContent = JSON.stringify(data, null, 2);
+                } else {
+                    throw new Error(data.error || 'Unknown error');
+                }
+            } catch (err) {
+                statusDiv.classList.add('error');
+                statusDiv.textContent = 'Error: ' + err.message;
+                responsePre.textContent = JSON.stringify(err, Object.getOwnPropertyNames(err), 2);
+            }
+        }
+
+        async function loadData() {
+            const workerUrl = document.getElementById('workerUrl').value.replace(/\/$/, '');
+            const projectKey = document.getElementById('projectKey').value;
+            const apiName = document.getElementById('readApiName').value;
+            
+            const statusDiv = document.getElementById('status');
+            const responsePre = document.getElementById('response');
+            
+            statusDiv.style.display = 'block';
+            statusDiv.className = 'status';
+            statusDiv.textContent = 'Loading data...';
+            responsePre.textContent = 'Loading...';
+
+            try {
+                const res = await fetch(`${workerUrl}/proxy`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        projectKey: projectKey,
+                        apiName: apiName
+                    })
+                });
+
+                const data = await res.json();
+                
+                if (res.ok) {
+                    statusDiv.classList.add('success');
+                    statusDiv.textContent = 'Success! Data loaded from Firebase.';
+                    responsePre.textContent = JSON.stringify(data, null, 2);
+                } else {
+                    throw new Error(data.error || 'Unknown error');
+                }
+            } catch (err) {
+                statusDiv.classList.add('error');
+                statusDiv.textContent = 'Error: ' + err.message;
+                responsePre.textContent = JSON.stringify(err, Object.getOwnPropertyNames(err), 2);
+            }
+        }
+    </script>
+</body>
+</html>
