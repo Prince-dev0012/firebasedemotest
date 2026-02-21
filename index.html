@@ -173,12 +173,15 @@
                     statusDiv.textContent = 'Success! Data written to Firebase.';
                     responsePre.textContent = JSON.stringify(data, null, 2);
                 } else {
-                    throw new Error(data.error || 'Unknown error');
+                    // Include details in the thrown error so it shows up
+                    const errorDetails = data.details ? `\nDetails: ${JSON.stringify(data.details, null, 2)}` : '';
+                    throw new Error((data.error || 'Unknown error') + errorDetails);
                 }
             } catch (err) {
                 statusDiv.classList.add('error');
-                statusDiv.textContent = 'Error: ' + err.message;
-                responsePre.textContent = JSON.stringify(err, Object.getOwnPropertyNames(err), 2);
+                statusDiv.textContent = 'Error: ' + err.message.split('\n')[0]; // Show brief message in status
+                // Show full stack/details in the pre block
+                responsePre.textContent = err.message + "\n\nStack:\n" + (err.stack || "No stack trace");
             }
         }
 
@@ -214,12 +217,13 @@
                     statusDiv.textContent = 'Success! Data loaded from Firebase.';
                     responsePre.textContent = JSON.stringify(data, null, 2);
                 } else {
-                    throw new Error(data.error || 'Unknown error');
+                    const errorDetails = data.details ? `\nDetails: ${JSON.stringify(data.details, null, 2)}` : '';
+                    throw new Error((data.error || 'Unknown error') + errorDetails);
                 }
             } catch (err) {
                 statusDiv.classList.add('error');
-                statusDiv.textContent = 'Error: ' + err.message;
-                responsePre.textContent = JSON.stringify(err, Object.getOwnPropertyNames(err), 2);
+                statusDiv.textContent = 'Error: ' + err.message.split('\n')[0];
+                responsePre.textContent = err.message + "\n\nStack:\n" + (err.stack || "No stack trace");
             }
         }
     </script>
